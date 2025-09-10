@@ -143,6 +143,8 @@ func (t *StdioTransport) Connect(ctx context.Context) error {
 		t.processExit <- t.cmd.Wait()
 	}()
 
+	go t.handleStderr()
+
 	t.connected = true
 	return nil
 }
@@ -151,7 +153,6 @@ func (t *StdioTransport) Connect(ctx context.Context) error {
 func (t *StdioTransport) Disconnect() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-
 	if !t.connected {
 		return nil
 	}
@@ -164,10 +165,13 @@ func (t *StdioTransport) Disconnect() error {
 	// Wait for process to exit with timeout
 	select {
 	case err := <-t.processExit:
+
 		if err != nil && !errors.Is(err, os.ErrProcessDone) {
 			return fmt.Errorf("process exited with error: %w", err)
 		}
-	case <-time.After(time.Second * 5):
+	case <-time.After(5 * time.Second):
+
+		// Force kill if process doesn't exit gracefully
 		if err := t.cmd.Process.Kill(); err != nil {
 			return fmt.Errorf("failed to kill process: %w", err)
 		}
