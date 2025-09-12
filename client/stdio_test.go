@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -70,4 +72,79 @@ func TestStdioTransport_SendReceive(t *testing.T) {
 	assert.Equal(t, testMsg.JSONRPC, msg.JSONRPC)
 	assert.Equal(t, testMsg.Method, msg.Method)
 	assert.Equal(t, testMsg.ID, msg.ID)
+}
+
+func TestStdioTransport_StderrHandler(t *testing.T) {
+	scriptPath := setupMockServer(t)
+	defer os.RemoveAll(filepath.Dir(scriptPath))
+
+	var mu sync.Mutex
+	var stderrOutput []string
+	transport := NewStdioTransport(
+		scriptPath,
+		nil,
+		WithStdioStderrHandler(func(line string) {
+			mu.Lock()
+			stderrOutput = append(stderrOutput, line)
+			mu.Unlock()
+		}),
+	)
+
+	err := transport.Connect(context.Background())
+	require.NoError(t, err)
+	defer transport.Disconnect()
+
+	testMsg := &JSONRPCMessage{
+		JSONRPC: "2.0",
+		Method:  "test",
+	}
+	err = transport.Send(context.Background(), testMsg)
+	assert.NoError(t, err)
+
+	// Wait for stderr handler to receive output
+	success := assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(stderrOutput) > 0
+	}, 2*time.Second, 100*time.Millisecond, "stderr output not received")
+
+	if success {
+		mu.Lock()
+		assert.Contains(t, stderrOutput, "log message")
+		mu.Unlock()
+	}
+}
+
+func TestStdioTransport_ContextCancellation(t *testing.T) {
+	scriptPath := setupMockServer(t)
+	defer os.RemoveAll(filepath.Dir(scriptPath))
+
+	transport := NewStdioTransport(scriptPath, nil)
+	err := transport.Connect(context.Background())
+	require.NoError(t, err)
+	defer transport.Disconnect()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err = transport.Send(ctx, nil)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestStdioTransport_ProcessExit(t *testing.T) {
+	scriptPath := setupMockServer(t)
+	defer os.RemoveAll(filepath.Dir(scriptPath))
+
+	transport := NewStdioTransport(scriptPath, nil)
+	err := transport.Connect(context.Background())
+	require.NoError(t, err)
+
+	// Close stdin to make the process exit
+	transport.Disconnect()
+
+	// Trying to send after the process exit should fail
+	err = transport.Send(context.Background(), &JSONRPCMessage{})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not connected")
+
 }
