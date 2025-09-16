@@ -69,7 +69,7 @@ func (t *SSETransport) Connect(ctx context.Context) error {
 
 	es, err := newEventSource(ctx, t.baseURL, t.httpClient)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to connect to SSE endpoint: %w", err)
 	}
 
 	select {

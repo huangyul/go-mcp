@@ -8,15 +8,15 @@ import (
 )
 
 // RequestID represents a uniquely identifying ID for a request in JSON-RPC
-type RequestID any // can be string or integer
+type RequestID interface{} // can be string or integer
 
 // JSONRPCMessage represents a JSON-RPC 2.0 message
 type JSONRPCMessage struct {
 	JSONRPC string        `json:"jsonrpc"`
 	ID      RequestID     `json:"id,omitempty"`
 	Method  string        `json:"method,omitempty"`
-	Params  any           `json:"params,omitempty"`
-	Result  any           `json:"result,omitempty"`
+	Params  interface{}   `json:"params,omitempty"`
+	Result  interface{}   `json:"result,omitempty"`
 	Error   *JSONRPCError `json:"error,omitempty"`
 }
 
@@ -40,20 +40,24 @@ func (m *JSONRPCMessage) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
+	// Handle ID field specially
 	if aux.ID != nil {
+		// Try as integer first
 		var i int
-		if err := json.Unmarshal(aux.ID, &i); err != nil {
+		if err := json.Unmarshal(aux.ID, &i); err == nil {
 			m.ID = i
 			return nil
 		}
 
+		// Try as string next
 		var s string
-		if err := json.Unmarshal(aux.ID, &s); err != nil {
+		if err := json.Unmarshal(aux.ID, &s); err == nil {
 			m.ID = s
 			return nil
 		}
 
-		return fmt.Errorf("id must be string or integer")
+		// If neither, return the original error
+		return fmt.Errorf("id must be an integer or string")
 	}
 
 	return nil
