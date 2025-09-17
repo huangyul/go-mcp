@@ -31,6 +31,16 @@ type FilesystemClient struct {
 	transport *client.StdioTransport
 }
 
+type Tool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"inputSchema"`
+}
+
+type ListToolsResult struct {
+	Tools []Tool `json:"tools"`
+}
+
 func NewFilesystemClient() (*FilesystemClient, error) {
 	transport := client.NewStdioTransport(
 		"/home/huang/.nvm/versions/node/v22.19.0/bin/npx",
@@ -127,15 +137,54 @@ func (fc *FilesystemClient) callTool(ctx context.Context, name string, args map[
 }
 
 func main() {
-	client, err := NewFilesystemClient()
+	fsClient, err := NewFilesystemClient()
 	if err != nil {
 		log.Fatalf("failed to create client: %v", err)
 	}
 
 	ctx := context.Background()
 
-	fmt.Println("listring /tmp diretory...")
-	entries, err := client.ListDirectory(ctx, "/tmp")
+	fmt.Println("Available Tools:")
+	fmt.Println("---------------")
+
+	msg := &client.JSONRPCMessage{
+		JSONRPC: "2.0",
+		Method:  "tools/list",
+		ID:      1,
+	}
+
+	err = fsClient.transport.Send(ctx, msg)
+	if err != nil {
+		log.Fatalf("failed to send tools/list response: %v", err)
+	}
+
+	response, err := fsClient.transport.Receive(ctx)
+	if err != nil {
+		log.Fatalf("failed to receive tools/list: %v", err)
+	}
+
+	resultBytes, err := json.Marshal(response.Result)
+	if err != nil {
+		log.Fatalf("failed to marshal result: %v", err)
+	}
+
+	var result ListToolsResult
+	err = json.Unmarshal(resultBytes, &result)
+	if err != nil {
+		log.Fatalf("failed to parse tools list: %v", err)
+	}
+
+	for _, tool := range result.Tools {
+		fmt.Printf("\n📦 %s\n", tool.Name)
+		fmt.Printf("   %s\n", tool.Description)
+		fmt.Printf("   Input: %s\n", tool.InputSchema)
+	}
+
+	fmt.Println("\nDemo Operations:")
+	fmt.Println("---------------")
+
+	fmt.Println("\n📂 listring /tmp diretory...")
+	entries, err := fsClient.ListDirectory(ctx, "/tmp")
 	if err != nil {
 		log.Fatalf("failed to list directory: %v", err)
 	}
@@ -144,19 +193,20 @@ func main() {
 		fmt.Println(entry)
 	}
 
-	fmt.Println("\nCreating /tmp/mcp direcotry...")
-	err = client.CreateDirectory(ctx, "/tmp/mcp")
+	fmt.Println("\n📂 Creating /tmp/mcp direcotry...")
+	err = fsClient.CreateDirectory(ctx, "/tmp/mcp")
 	if err != nil {
 		log.Fatalf("failed to create directory: %v", err)
 	}
 
-	fmt.Println("\nCreating and writing to /tmp/mcp/test.txt...")
-	err = client.WriteFile(ctx, "/tmp/mcp/test.txt", "hello, go mcp")
+	fmt.Println("📝 Creating and writing to /tmp/mcp/test.txt...")
+	err = fsClient.WriteFile(ctx, "/tmp/mcp/test.txt", "hello, go mcp\n")
 	if err != nil {
 		log.Fatalf("failed to write file: %v", err)
 	}
 
-	entries, err = client.ListDirectory(ctx, "/tmp/mcp")
+	fmt.Println("\n📂 Listing /tmp/mcp directory:")
+	entries, err = fsClient.ListDirectory(ctx, "/tmp/mcp")
 	if err != nil {
 		log.Fatalf("Failed to list directory: %v", err)
 	}
