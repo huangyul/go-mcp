@@ -13,6 +13,7 @@ import (
 	"sync"
 )
 
+// SSETranport implements the Transport interface using Server-Sent Events
 type SSETransport struct {
 	baseURL     string
 	postURL     string
@@ -22,6 +23,7 @@ type SSETransport struct {
 	connected   bool
 }
 
+// EventSource represents a connection to an SSE stream
 type EventSource struct {
 	url        string
 	httpClient *http.Client
@@ -33,19 +35,23 @@ type EventSource struct {
 	closeOnce  sync.Once
 }
 
+// SSEEvent represents a Server-Sent Event
 type SSEEvent struct {
 	Type string
 	Data string
 }
 
+// SSEOption represents an option for configuration the SSE transport
 type SSEOption func(*SSETransport)
 
+// WithHTTPClient set a custom HTTP client for the SSE transport
 func WithHTTPClient(client *http.Client) SSEOption {
 	return func(s *SSETransport) {
 		s.httpClient = client
 	}
 }
 
+// NewSSETransport create a new SSE transport
 func NewSSETransport(baseUrl string, opts ...SSEOption) *SSETransport {
 	t := &SSETransport{
 		baseURL:    baseUrl,
@@ -59,6 +65,7 @@ func NewSSETransport(baseUrl string, opts ...SSEOption) *SSETransport {
 	return t
 }
 
+// Connect establishes an SSE connection and waits for the endpoint event
 func (t *SSETransport) Connect(ctx context.Context) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -72,6 +79,7 @@ func (t *SSETransport) Connect(ctx context.Context) error {
 		return fmt.Errorf("failed to connect to SSE endpoint: %w", err)
 	}
 
+	// Wait the endpoint event
 	select {
 	case evt := <-es.events:
 		if evt.Type != "endpoint" {
@@ -92,6 +100,7 @@ func (t *SSETransport) Connect(ctx context.Context) error {
 	return nil
 }
 
+// Disconnect closes the SSE connection
 func (t *SSETransport) Disconnect() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -109,6 +118,7 @@ func (t *SSETransport) Disconnect() error {
 	return nil
 }
 
+// Send sends a JSON-RPC message via HTTP POST
 func (t *SSETransport) Send(ctx context.Context, msg *JSONRPCMessage) error {
 	if msg == nil {
 		return errors.New("message cannot be nil")
@@ -156,6 +166,7 @@ func (t *SSETransport) Send(ctx context.Context, msg *JSONRPCMessage) error {
 	return nil
 }
 
+// Receive receives a JSON-RPC message from SSE stream
 func (t *SSETransport) Receive(ctx context.Context) (*JSONRPCMessage, error) {
 	t.mu.Lock()
 	if !t.connected || t.eventSource == nil {
@@ -183,6 +194,7 @@ func (t *SSETransport) Receive(ctx context.Context) (*JSONRPCMessage, error) {
 	}
 }
 
+// newEventSource creates a new EventSource connection
 func newEventSource(ctx context.Context, baseURL string, client *http.Client) (*EventSource, error) {
 	es := &EventSource{
 		url:        baseURL,
