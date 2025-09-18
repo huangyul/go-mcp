@@ -16,8 +16,8 @@ type StdioMCPClient struct {
 	stdin       io.WriteCloser
 	stdout      *bufio.Reader
 	requestID   atomic.Int64
-	response    map[int64]chan *json.RawMessage
-	mu          sync.Mutex
+	responses   map[int64]chan *json.RawMessage
+	mu          sync.RWMutex
 	done        chan struct{}
 	initialized bool
 }
@@ -39,11 +39,11 @@ func NewStdioMCPClient(
 	}
 
 	client := &StdioMCPClient{
-		cmd:      cmd,
-		stdin:    stdin,
-		stdout:   bufio.NewReader(stdout),
-		response: make(map[int64]chan *json.RawMessage),
-		done:     make(chan struct{}),
+		cmd:       cmd,
+		stdin:     stdin,
+		stdout:    bufio.NewReader(stdout),
+		responses: make(map[int64]chan *json.RawMessage),
+		done:      make(chan struct{}),
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -55,25 +55,24 @@ func NewStdioMCPClient(
 	return client, nil
 }
 
-func (s *StdioMCPClient) Close() error {
-	close(s.done)
-	if err := s.stdin.Close(); err != nil {
+func (c *StdioMCPClient) Close() error {
+	close(c.done)
+	if err := c.stdin.Close(); err != nil {
 		return fmt.Errorf("failed to close stdin: %w", err)
 	}
-
-	return s.cmd.Wait()
+	return c.cmd.Wait()
 }
 
-func (s *StdioMCPClient) readResponses() {
+func (c *StdioMCPClient) readResponses() {
 	for {
 		select {
-		case <-s.done:
+		case <-c.done:
 			return
 		default:
-			line, err := s.stdout.ReadString('\n')
+			line, err := c.stdout.ReadString('\n')
 			if err != nil {
 				if err != io.EOF {
-					fmt.Printf("error reading response: %v\n", err)
+					fmt.Printf("Error reading response: %v\n", err)
 				}
 				return
 			}
@@ -91,40 +90,40 @@ func (s *StdioMCPClient) readResponses() {
 				continue
 			}
 
-			s.mu.Lock()
-			ch, ok := s.response[response.ID]
-			s.mu.Unlock()
+			c.mu.RLock()
+			ch, ok := c.responses[response.ID]
+			c.mu.RUnlock()
 
 			if ok {
 				if response.Error != nil {
-					ch <- nil
+					ch <- nil // Signal error condition
 				} else {
 					ch <- &response.Result
 				}
-				s.mu.Lock()
-				delete(s.response, response.ID)
-				s.mu.Unlock()
+				c.mu.Lock()
+				delete(c.responses, response.ID)
+				c.mu.Unlock()
 			}
 		}
 	}
 }
 
-func (s *StdioMCPClient) sendRequest(
+func (c *StdioMCPClient) sendRequest(
 	ctx context.Context,
 	method string,
-	params any,
+	params interface{},
 ) (*json.RawMessage, error) {
-	if !s.initialized && method != "initialized" {
+	if !c.initialized && method != "initialize" {
 		return nil, fmt.Errorf("client not initialized")
 	}
 
-	id := s.requestID.Add(1)
+	id := c.requestID.Add(1)
 
 	request := struct {
-		JSONRPC string `json:"jsonrpc"`
-		ID      int64  `json:"id"`
-		Method  string `json:"method"`
-		Params  any    `json:"params,omitempty"`
+		JSONRPC string      `json:"jsonrpc"`
+		ID      int64       `json:"id"`
+		Method  string      `json:"method"`
+		Params  interface{} `json:"params,omitempty"`
 	}{
 		JSONRPC: "2.0",
 		ID:      id,
@@ -133,9 +132,9 @@ func (s *StdioMCPClient) sendRequest(
 	}
 
 	responseChan := make(chan *json.RawMessage, 1)
-	s.mu.Lock()
-	s.response[id] = responseChan
-	s.mu.Unlock()
+	c.mu.Lock()
+	c.responses[id] = responseChan
+	c.mu.Unlock()
 
 	requestBytes, err := json.Marshal(request)
 	if err != nil {
@@ -143,15 +142,15 @@ func (s *StdioMCPClient) sendRequest(
 	}
 	requestBytes = append(requestBytes, '\n')
 
-	if _, err := s.stdin.Write(requestBytes); err != nil {
+	if _, err := c.stdin.Write(requestBytes); err != nil {
 		return nil, fmt.Errorf("failed to write request: %w", err)
 	}
 
 	select {
 	case <-ctx.Done():
-		s.mu.Lock()
-		delete(s.response, id)
-		s.mu.Unlock()
+		c.mu.Lock()
+		delete(c.responses, id)
+		c.mu.Unlock()
 		return nil, ctx.Err()
 	case response := <-responseChan:
 		if response == nil {
@@ -161,8 +160,12 @@ func (s *StdioMCPClient) sendRequest(
 	}
 }
 
-// Initialize implements MCPClient.
-func (s *StdioMCPClient) Initialize(ctx context.Context, capabilities ClientCapabilities, clientInfo Implementation, protocolVersion string) (*InitializeResult, error) {
+func (c *StdioMCPClient) Initialize(
+	ctx context.Context,
+	capabilities ClientCapabilities,
+	clientInfo Implementation,
+	protocolVersion string,
+) (*InitializeResult, error) {
 	params := struct {
 		Capabilities    ClientCapabilities `json:"capabilities"`
 		ClientInfo      Implementation     `json:"clientInfo"`
@@ -173,7 +176,7 @@ func (s *StdioMCPClient) Initialize(ctx context.Context, capabilities ClientCapa
 		ProtocolVersion: protocolVersion,
 	}
 
-	response, err := s.sendRequest(ctx, "initialize", params)
+	response, err := c.sendRequest(ctx, "initialize", params)
 	if err != nil {
 		return nil, err
 	}
@@ -183,19 +186,26 @@ func (s *StdioMCPClient) Initialize(ctx context.Context, capabilities ClientCapa
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
-	s.initialized = true
+	c.initialized = true
 	return &result, nil
 }
 
-// ListResources implements MCPClient.
-func (s *StdioMCPClient) ListResources(ctx context.Context, cursor *string) (*ListResourcesResult, error) {
+func (c *StdioMCPClient) Ping(ctx context.Context) error {
+	_, err := c.sendRequest(ctx, "ping", nil)
+	return err
+}
+
+func (c *StdioMCPClient) ListResources(
+	ctx context.Context,
+	cursor *string,
+) (*ListResourcesResult, error) {
 	params := struct {
 		Cursor *string `json:"cursor,omitempty"`
 	}{
 		Cursor: cursor,
 	}
 
-	response, err := s.sendRequest(ctx, "resources/list", params)
+	response, err := c.sendRequest(ctx, "resources/list", params)
 	if err != nil {
 		return nil, err
 	}
@@ -208,15 +218,17 @@ func (s *StdioMCPClient) ListResources(ctx context.Context, cursor *string) (*Li
 	return &result, nil
 }
 
-// ReadResource implements MCPClient.
-func (s *StdioMCPClient) ReadResource(ctx context.Context, uri string) (*ReadResourceResult, error) {
+func (c *StdioMCPClient) ReadResource(
+	ctx context.Context,
+	uri string,
+) (*ReadResourceResult, error) {
 	params := struct {
-		URI string `uri:"uri"`
+		URI string `json:"uri"`
 	}{
 		URI: uri,
 	}
 
-	response, err := s.sendRequest(ctx, "resources/read", params)
+	response, err := c.sendRequest(ctx, "resources/read", params)
 	if err != nil {
 		return nil, err
 	}
@@ -229,15 +241,14 @@ func (s *StdioMCPClient) ReadResource(ctx context.Context, uri string) (*ReadRes
 	return &result, nil
 }
 
-// Subscribe implements MCPClient.
-func (s *StdioMCPClient) Subscribe(ctx context.Context, uri string) error {
+func (c *StdioMCPClient) Subscribe(ctx context.Context, uri string) error {
 	params := struct {
 		URI string `json:"uri"`
 	}{
 		URI: uri,
 	}
 
-	_, err := s.sendRequest(ctx, "resources/subscribe", params)
+	_, err := c.sendRequest(ctx, "resources/subscribe", params)
 	return err
 }
 
