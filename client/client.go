@@ -1,101 +1,62 @@
 package client
 
-import (
-	"context"
-	"errors"
-	"sync"
-	"sync/atomic"
-)
+import "context"
 
-// Client represent an MCP client
-type Client struct {
-	config     ClientConfig
-	transport  Transport
-	nextReqID  atomic.Int64
-	handlers   map[string]NotificationHandler
-	handlersmu sync.RWMutex
+// Client represents an MCP client interface
+type MCPClient interface {
+	// Initialize sends the initial connection request to the server
+	Initialize(
+		ctx context.Context,
+		capabilities ClientCapabilities,
+		clientInfo Implementation,
+		protocolVersion string,
+	) (*InitializeResult, error)
+
+	// Ping checks if the server is alive
+	Ping(ctx context.Context) error
+
+	// ListResources requests a list of available resources from the server
+	ListResources(
+		ctx context.Context,
+		cursor *string,
+	) (*ListResourcesResult, error)
+
+	// ReadResource reads a specific resource from the server
+	ReadResource(ctx context.Context, uri string) (*ReadResourceResult, error)
+
+	// Subscribe requests notifications for changes to a specific resource
+	Subscribe(ctx context.Context, uri string) error
+
+	// Unsubscribe cancels notifications for a specific resource
+	Unsubscribe(ctx context.Context, uri string) error
+
+	// ListPrompts requests a list of available prompts from the server
+	ListPrompts(ctx context.Context, cursor *string) (*ListPromptsResult, error)
+
+	// GetPrompt retrieves a specific prompt from the server
+	GetPrompt(
+		ctx context.Context,
+		name string,
+		arguments map[string]string,
+	) (*GetPromptResult, error)
+
+	// ListTools requests a list of available tools from the server
+	ListTools(ctx context.Context, cursor *string) (*ListToolsResult, error)
+
+	// CallTool invokes a specific tool on the server
+	CallTool(
+		ctx context.Context,
+		name string,
+		arguments map[string]interface{},
+	) (*CallToolResult, error)
+
+	// SetLevel sets the logging level for the server
+	SetLevel(ctx context.Context, level LoggingLevel) error
+
+	// Complete requests completion options for a given argument
+	Complete(
+		ctx context.Context,
+		ref interface{},
+		argument CompleteArgument,
+	) (*CompleteResult, error)
 }
-
-// New create a new MCP client
-func New(config ClientConfig, transport Transport) *Client {
-	return &Client{
-		config:    config,
-		transport: transport,
-		handlers:  make(map[string]NotificationHandler),
-	}
-}
-
-// nextRequestID generates the next request ID
-func (c *Client) nextRequestID() RequestID {
-	return c.nextReqID.Add(1)
-}
-
-// Connect establishes a connection with the server
-func (c *Client) Connect(ctx context.Context) error {
-	if err := c.transport.Connect(ctx); err != nil {
-		return err
-	}
-
-	// Send initialize request
-	initReq := &JSONRPCMessage{
-		JSONRPC: "2.0",
-		ID:      c.nextRequestID(),
-		Method:  "initialize",
-		Params: map[string]any{
-			"clientInfo":      c.config.Implementation,
-			"capabilities":    c.config.Capabilities,
-			"protocolVersion": "1.0", // update with actual version
-		},
-	}
-
-	if err := c.transport.Send(ctx, initReq); err != nil {
-		return err
-	}
-
-	// wait for initialize response
-	resp, err := c.transport.Receive(ctx)
-	if err != nil {
-		return err
-	}
-
-	if resp.Error != nil {
-		return errors.New(resp.Error.Message)
-	}
-
-	notifications := &JSONRPCMessage{
-		JSONRPC: "2.0",
-		Method:  "notifications/initialized",
-	}
-
-	return c.transport.Send(ctx, notifications)
-}
-
-// RegisterNotificationHandler register a handler for a specific notification method
-func (c *Client) RegisterNotificationHandler(method string, handler NotificationHandler) {
-	c.handlersmu.Lock()
-	defer c.handlersmu.Unlock()
-	c.handlers[method] = handler
-}
-
-func (c *Client) HandleNotification(ctx context.Context, msg *JSONRPCMessage) error {
-	c.handlersmu.RLock()
-	handler, ok := c.handlers[msg.Method]
-	c.handlersmu.RUnlock()
-
-	if !ok {
-		return nil
-	}
-
-	return handler(ctx, msg)
-}
-
-// Transport defines interface for different transport implementations
-type Transport interface {
-	Connect(context.Context) error
-	Disconnect() error
-	Send(context.Context, *JSONRPCMessage) error
-	Receive(context.Context) (*JSONRPCMessage, error)
-}
-
-// NotificationHandler represents a handler for incoming notifications
-type NotificationHandler func(context.Context, *JSONRPCMessage) error

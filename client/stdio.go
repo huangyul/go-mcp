@@ -4,285 +4,388 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"sync"
-	"time"
+	"sync/atomic"
 )
 
-// StdioConfig holds configuration options for stdio stransport
-type StdioConfig struct {
-	// Command is the server process to execute
-	Command string
-	// Args are the arguments to pass to the command
-	Args []string
-	// Dir is the working directory for the command
-	Dir string
-	// Env is the environment variables for the command
-	Env []string
-	// StderrHandler is called for each line written to stderr
-	StderrHandler func(string)
+type StdioMCPClient struct {
+	cmd         *exec.Cmd
+	stdin       io.WriteCloser
+	stdout      *bufio.Reader
+	requestID   atomic.Int64
+	response    map[int64]chan *json.RawMessage
+	mu          sync.Mutex
+	done        chan struct{}
+	initialized bool
 }
 
-// StdioOption represents an option for configuring the stdio transport
-type StdioOption func(*StdioConfig)
+func NewStdioMCPClient(
+	command string,
+	args ...string,
+) (*StdioMCPClient, error) {
+	cmd := exec.Command(command, args...)
 
-// WithStdioDir set the working directory for the server process
-func WithStdioDir(dir string) StdioOption {
-	return func(c *StdioConfig) {
-		c.Dir = dir
-	}
-}
-
-// WithStdioEnv sets environment variables for the server process
-func WithStdioEnv(env []string) StdioOption {
-	return func(c *StdioConfig) {
-		c.Env = env
-	}
-}
-
-// WithStdioStderrHandler sets a handler for stderr output
-func WithStdioStderrHandler(handler func(string)) StdioOption {
-	return func(c *StdioConfig) {
-		c.StderrHandler = handler
-	}
-}
-
-// Update the StdioTransport struct to include the stderr handler
-type StdioTransport struct {
-	cmd           *exec.Cmd
-	stdin         io.WriteCloser
-	stdout        *bufio.Reader
-	stderr        io.ReadCloser
-	stderrDone    chan struct{}
-	processExit   chan error
-	mu            sync.Mutex
-	connected     bool
-	stderrHandler func(string)
-}
-
-// Update NewStdioTransport to store the stderr handler
-func NewStdioTransport(command string, args []string, opts ...StdioOption) *StdioTransport {
-
-	config := &StdioConfig{
-		Command: command,
-		Args:    args,
-		// Default stderr handler just writes to os.Stderr
-		StderrHandler: func(line string) {
-			fmt.Fprintln(os.Stderr, line)
-		},
-	}
-
-	for _, opt := range opts {
-		opt(config)
-	}
-
-	return &StdioTransport{
-		cmd: &exec.Cmd{
-			Path: config.Command,
-			Args: append([]string{config.Command}, config.Args...),
-			Dir:  config.Dir,
-			Env:  config.Env,
-		},
-		stderrHandler: config.StderrHandler,
-		stderrDone:    make(chan struct{}),
-		processExit:   make(chan error, 1),
-	}
-}
-
-// Update handleStderr to use the configured handler
-func (t *StdioTransport) handleStderr() {
-	defer close(t.stderrDone)
-
-	scanner := bufio.NewScanner(t.stderr)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if t.stderrHandler != nil {
-			t.stderrHandler(line)
-		}
-	}
-}
-
-// Connect starts the server process and establishes stdio communication
-func (t *StdioTransport) Connect(ctx context.Context) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if t.connected {
-		return nil
-	}
-
-	stdin, err := t.cmd.StdinPipe()
+	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return fmt.Errorf("failed to create stdin pipe: %s", err.Error())
+		return nil, fmt.Errorf("failed to create stdin pipe: %w", err)
 	}
-	t.stdin = stdin
 
-	stdout, err := t.cmd.StdoutPipe()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("failed to create stdout pipe: %s", err.Error())
-	}
-	t.stdout = bufio.NewReader(stdout)
-
-	stderr, err := t.cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("failed to create stderr pipe: %s", err.Error())
-	}
-	t.stderr = stderr
-
-	// start the process
-	if err := t.cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start process: %w", err)
+		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
 
-	// Handle process exit
-	go func() {
-		t.processExit <- t.cmd.Wait()
-	}()
+	client := &StdioMCPClient{
+		cmd:      cmd,
+		stdin:    stdin,
+		stdout:   bufio.NewReader(stdout),
+		response: make(map[int64]chan *json.RawMessage),
+		done:     make(chan struct{}),
+	}
 
-	go t.handleStderr()
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start command: %w", err)
+	}
 
-	t.connected = true
-	return nil
+	go client.readResponses()
+
+	return client, nil
 }
 
-// Disconnet stop the server process and close all pipes
-func (t *StdioTransport) Disconnect() error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if !t.connected {
-		return nil
+func (s *StdioMCPClient) Close() error {
+	close(s.done)
+	if err := s.stdin.Close(); err != nil {
+		return fmt.Errorf("failed to close stdin: %w", err)
 	}
 
-	// Close stdin to signal EOF to the process
-	if t.stdin != nil {
-		t.stdin.Close()
-	}
-
-	// Wait for process to exit with timeout
-	select {
-	case err := <-t.processExit:
-
-		if err != nil && !errors.Is(err, os.ErrProcessDone) {
-			return fmt.Errorf("process exited with error: %w", err)
-		}
-	case <-time.After(5 * time.Second):
-
-		// Force kill if process doesn't exit gracefully
-		if err := t.cmd.Process.Kill(); err != nil {
-			return fmt.Errorf("failed to kill process: %w", err)
-		}
-	}
-
-	// Wait for stderr handler to finish
-	<-t.stderrDone
-
-	t.connected = false
-	return nil
-
+	return s.cmd.Wait()
 }
 
-// Send sends a JSON-RPC message to the server process's stdin
-func (t *StdioTransport) Send(ctx context.Context, msg *JSONRPCMessage) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if !t.connected {
-		return errors.New("not connected")
-	}
-
-	// Check if process has exited
-	select {
-	case err := <-t.processExit:
-		return fmt.Errorf("process has exited: %w", err)
-	default:
-	}
-
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal message: %w", err)
-	}
-
-	data = append(data, '\n')
-
-	done := make(chan error, 1)
-	go func() {
-		_, err := t.stdin.Write(data)
-		done <- err
-	}()
-
-	// Wait for write to complete or context to be canceled
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case err := <-done:
-		if err != nil {
-			return fmt.Errorf("failed to write message: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// Receive receives a JSON-RPC message from the server process's stdout
-func (t *StdioTransport) Receive(ctx context.Context) (*JSONRPCMessage, error) {
-	t.mu.Lock()
-	if !t.connected {
-		t.mu.Unlock()
-		return nil, errors.New("not connected")
-	}
-	t.mu.Unlock()
-
-	select {
-	case err := <-t.processExit:
-		return nil, fmt.Errorf("process has exited: %w", err)
-	default:
-	}
-
-	type readResult struct {
-		msg *JSONRPCMessage
-		err error
-	}
-
-	done := make(chan readResult, 1)
-
-	go func() {
-		str, err := t.stdout.ReadString('\n')
-		if err != nil {
-			done <- readResult{
-				err: fmt.Errorf("failed to read message: %w", err),
-			}
+func (s *StdioMCPClient) readResponses() {
+	for {
+		select {
+		case <-s.done:
 			return
-		}
-		var msg JSONRPCMessage
-		if err := json.Unmarshal([]byte(str), &msg); err != nil {
-			done <- readResult{
-				err: fmt.Errorf("failed to Unmarshal message: %w", err),
+		default:
+			line, err := s.stdout.ReadString('\n')
+			if err != nil {
+				if err != io.EOF {
+					fmt.Printf("error reading response: %v\n", err)
+				}
+				return
 			}
-			return
-		}
-		done <- readResult{msg: &msg}
 
-	}()
+			var response struct {
+				ID     int64           `json:"id"`
+				Result json.RawMessage `json:"result,omitempty"`
+				Error  *struct {
+					Code    int    `json:"code"`
+					Message string `json:"message"`
+				} `json:"error,omitempty"`
+			}
+
+			if err := json.Unmarshal([]byte(line), &response); err != nil {
+				continue
+			}
+
+			s.mu.Lock()
+			ch, ok := s.response[response.ID]
+			s.mu.Unlock()
+
+			if ok {
+				if response.Error != nil {
+					ch <- nil
+				} else {
+					ch <- &response.Result
+				}
+				s.mu.Lock()
+				delete(s.response, response.ID)
+				s.mu.Unlock()
+			}
+		}
+	}
+}
+
+func (s *StdioMCPClient) sendRequest(
+	ctx context.Context,
+	method string,
+	params any,
+) (*json.RawMessage, error) {
+	if !s.initialized && method != "initialized" {
+		return nil, fmt.Errorf("client not initialized")
+	}
+
+	id := s.requestID.Add(1)
+
+	request := struct {
+		JSONRPC string `json:"jsonrpc"`
+		ID      int64  `json:"id"`
+		Method  string `json:"method"`
+		Params  any    `json:"params,omitempty"`
+	}{
+		JSONRPC: "2.0",
+		ID:      id,
+		Method:  method,
+		Params:  params,
+	}
+
+	responseChan := make(chan *json.RawMessage, 1)
+	s.mu.Lock()
+	s.response[id] = responseChan
+	s.mu.Unlock()
+
+	requestBytes, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	requestBytes = append(requestBytes, '\n')
+
+	if _, err := s.stdin.Write(requestBytes); err != nil {
+		return nil, fmt.Errorf("failed to write request: %w", err)
+	}
 
 	select {
 	case <-ctx.Done():
+		s.mu.Lock()
+		delete(s.response, id)
+		s.mu.Unlock()
 		return nil, ctx.Err()
-	case res := <-done:
-		if res.err != nil {
-			return nil, fmt.Errorf("failed to read message: %w", res.err)
+	case response := <-responseChan:
+		if response == nil {
+			return nil, fmt.Errorf("request failed")
 		}
-		return res.msg, nil
+		return response, nil
 	}
 }
 
-// IsConnected returns whether the transport is currently connected
-func (t *StdioTransport) IsConnected() bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+// Initialize implements MCPClient.
+func (s *StdioMCPClient) Initialize(ctx context.Context, capabilities ClientCapabilities, clientInfo Implementation, protocolVersion string) (*InitializeResult, error) {
+	params := struct {
+		Capabilities    ClientCapabilities `json:"capabilities"`
+		ClientInfo      Implementation     `json:"clientInfo"`
+		ProtocolVersion string             `json:"protocolVersion"`
+	}{
+		Capabilities:    capabilities,
+		ClientInfo:      clientInfo,
+		ProtocolVersion: protocolVersion,
+	}
 
-	return t.connected
+	response, err := s.sendRequest(ctx, "initialize", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var result InitializeResult
+	if err := json.Unmarshal(*response, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	s.initialized = true
+	return &result, nil
+}
+
+// ListResources implements MCPClient.
+func (s *StdioMCPClient) ListResources(ctx context.Context, cursor *string) (*ListResourcesResult, error) {
+	params := struct {
+		Cursor *string `json:"cursor,omitempty"`
+	}{
+		Cursor: cursor,
+	}
+
+	response, err := s.sendRequest(ctx, "resources/list", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var result ListResourcesResult
+	if err := json.Unmarshal(*response, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// ReadResource implements MCPClient.
+func (s *StdioMCPClient) ReadResource(ctx context.Context, uri string) (*ReadResourceResult, error) {
+	params := struct {
+		URI string `uri:"uri"`
+	}{
+		URI: uri,
+	}
+
+	response, err := s.sendRequest(ctx, "resources/read", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var result ReadResourceResult
+	if err := json.Unmarshal(*response, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// Subscribe implements MCPClient.
+func (s *StdioMCPClient) Subscribe(ctx context.Context, uri string) error {
+	params := struct {
+		URI string `json:"uri"`
+	}{
+		URI: uri,
+	}
+
+	_, err := s.sendRequest(ctx, "resources/subscribe", params)
+	return err
+}
+
+func (c *StdioMCPClient) Unsubscribe(ctx context.Context, uri string) error {
+	params := struct {
+		URI string `json:"uri"`
+	}{
+		URI: uri,
+	}
+
+	_, err := c.sendRequest(ctx, "resources/unsubscribe", params)
+	return err
+}
+
+func (c *StdioMCPClient) ListPrompts(
+	ctx context.Context,
+	cursor *string,
+) (*ListPromptsResult, error) {
+	params := struct {
+		Cursor *string `json:"cursor,omitempty"`
+	}{
+		Cursor: cursor,
+	}
+
+	response, err := c.sendRequest(ctx, "prompts/list", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var result ListPromptsResult
+	if err := json.Unmarshal(*response, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return &result, nil
+}
+
+func (c *StdioMCPClient) GetPrompt(
+	ctx context.Context,
+	name string,
+	arguments map[string]string,
+) (*GetPromptResult, error) {
+	params := struct {
+		Name      string            `json:"name"`
+		Arguments map[string]string `json:"arguments,omitempty"`
+	}{
+		Name:      name,
+		Arguments: arguments,
+	}
+
+	response, err := c.sendRequest(ctx, "prompts/get", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var result GetPromptResult
+	if err := json.Unmarshal(*response, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return &result, nil
+}
+
+func (c *StdioMCPClient) ListTools(
+	ctx context.Context,
+	cursor *string,
+) (*ListToolsResult, error) {
+	params := struct {
+		Cursor *string `json:"cursor,omitempty"`
+	}{
+		Cursor: cursor,
+	}
+
+	response, err := c.sendRequest(ctx, "tools/list", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var result ListToolsResult
+	if err := json.Unmarshal(*response, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return &result, nil
+}
+
+func (c *StdioMCPClient) CallTool(
+	ctx context.Context,
+	name string,
+	arguments map[string]interface{},
+) (*CallToolResult, error) {
+	params := struct {
+		Name      string                 `json:"name"`
+		Arguments map[string]interface{} `json:"arguments,omitempty"`
+	}{
+		Name:      name,
+		Arguments: arguments,
+	}
+
+	response, err := c.sendRequest(ctx, "tools/call", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var result CallToolResult
+	if err := json.Unmarshal(*response, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return &result, nil
+}
+
+func (c *StdioMCPClient) SetLevel(
+	ctx context.Context,
+	level LoggingLevel,
+) error {
+	params := struct {
+		Level LoggingLevel `json:"level"`
+	}{
+		Level: level,
+	}
+
+	_, err := c.sendRequest(ctx, "logging/setLevel", params)
+	return err
+}
+
+func (c *StdioMCPClient) Complete(
+	ctx context.Context,
+	ref interface{},
+	argument CompleteArgument,
+) (*CompleteResult, error) {
+	params := struct {
+		Ref      interface{}      `json:"ref"`
+		Argument CompleteArgument `json:"argument"`
+	}{
+		Ref:      ref,
+		Argument: argument,
+	}
+
+	response, err := c.sendRequest(ctx, "completion/complete", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var result CompleteResult
+	if err := json.Unmarshal(*response, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return &result, nil
 }
