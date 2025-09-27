@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -69,7 +71,7 @@ func TestStdioTransport_Receive(t *testing.T) {
 	assert.Equal(t, msg.JSONRPC, res.JSONRPC)
 }
 
-func TestStdioTransport_ContextCancellatiion(t *testing.T) {
+func TestStdioTransport_ContextCancellation(t *testing.T) {
 	scriptPath := setupMockServer(t)
 	defer os.RemoveAll(filepath.Dir(scriptPath))
 
@@ -83,4 +85,61 @@ func TestStdioTransport_ContextCancellatiion(t *testing.T) {
 
 	_, err = transport.Receive(ctx)
 	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestStdioTransport_StderrHandler(t *testing.T) {
+	scriptPath := setupMockServer(t)
+	defer os.RemoveAll(filepath.Dir(scriptPath))
+
+	var mu sync.Mutex
+	var stderrOutput []string
+
+	transport := NewStdioTransport(
+		scriptPath,
+		nil,
+		WithStdioStdErrHandler(func(s string) {
+			mu.Lock()
+			stderrOutput = append(stderrOutput, s)
+			mu.Unlock()
+		}),
+	)
+
+	err := transport.Connect(context.Background())
+	require.NoError(t, err)
+	defer transport.Disconnect()
+
+	testMsg := &JSONRPCMessage{
+		JSONRPC: "2.0",
+		Method:  "test.test",
+	}
+	err = transport.Send(context.Background(), testMsg)
+	require.NoError(t, err)
+
+	success := assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(stderrOutput) > 0
+	}, 2*time.Second, 100*time.Millisecond, "stderr output not received")
+
+	if success {
+		mu.Lock()
+		assert.Contains(t, stderrOutput, "log message")
+		mu.Unlock()
+	}
+}
+
+func TestStdioTransport_ProcessExit(t *testing.T) {
+	scriptPath := setupMockServer(t)
+	defer os.RemoveAll(filepath.Dir(scriptPath))
+
+	transport := NewStdioTransport(scriptPath, nil)
+	err := transport.Connect(context.Background())
+	require.NoError(t, err)
+
+	err = transport.Disconnect()
+	require.NoError(t, err)
+
+	err = transport.Send(context.Background(), nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not connected")
 }
