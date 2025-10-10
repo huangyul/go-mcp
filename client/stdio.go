@@ -235,18 +235,12 @@ func (t *StdioTransport) Receive(ctx context.Context) (*JSONRPCMessage, error) {
 			return
 		}
 
-		fmt.Println("---- Receive msg1: ----")
-		fmt.Printf("---- %s ----\n", line)
-
 		// Parse JSON message
 		var msg JSONRPCMessage
 		if err := json.Unmarshal([]byte(line), &msg); err != nil {
 			done <- readResult{nil, fmt.Errorf("failed to unmarshal message: %w", err)}
 			return
 		}
-
-		fmt.Println("---- Receive msg2: ----")
-		fmt.Printf("---- %v ----\n", msg)
 
 		done <- readResult{&msg, nil}
 	}()
