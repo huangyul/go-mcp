@@ -1,4 +1,4 @@
-package client
+package mcp
 
 // Supporting types needed for the interface
 type ClientCapabilities struct {

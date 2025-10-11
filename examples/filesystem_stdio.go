@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/huangyul/go-mcp/client"
+	"github.com/huangyul/go-mcp/mcp"
 )
 
 func main() {
@@ -26,7 +27,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
-	initResult, err := c.Initialize(ctx, client.ClientCapabilities{}, client.Implementation{
+	initResult, err := c.Initialize(ctx, mcp.ClientCapabilities{}, mcp.Implementation{
 		Name:    "example-client",
 		Version: "1.0.0",
 	}, "1.0")
@@ -115,9 +116,9 @@ func main() {
 
 }
 
-func printToolResult(result *client.CallToolResult) {
+func printToolResult(result *mcp.CallToolResult) {
 	for _, content := range result.Content {
-		if textContext, ok := content.(client.TextContent); ok {
+		if textContext, ok := content.(mcp.TextContent); ok {
 			fmt.Println(textContext.Text)
 		} else {
 			jsonBytes, _ := json.MarshalIndent(content, "", "  ")
