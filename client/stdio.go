@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -72,7 +73,9 @@ func (c *StdioMCPClient) readResponses() {
 		default:
 			line, err := c.stdout.ReadString('\n')
 			if err != nil {
-				fmt.Printf("Error reading response: %v\n", err)
+				if !errors.Is(err, io.EOF) {
+					fmt.Printf("Error reading response: %v\n", err)
+				}
 			}
 
 			var response struct {
