@@ -41,7 +41,7 @@ func ServeStdio(server *DefaultServer) error {
 	s := &StdioServer{
 		server:    server,
 		signChan:  make(chan os.Signal, 1),
-		errLogger: log.New(os.Stdout, "", log.LstdFlags),
+		errLogger: log.New(os.Stderr, "", log.LstdFlags),
 	}
 
 	return s.serve()
@@ -82,16 +82,20 @@ func (s *StdioServer) handleNextMessage(ctx context.Context, reader *bufio.Reade
 
 	var request JSONRPCRequest
 	if err := json.Unmarshal([]byte(line), &request); err != nil {
+		s.writeError(nil, -32700, "Parse error")
 		return fmt.Errorf("failed to parse JSON-RPC request: %w", err)
 	}
 
+	// Validate JSON-RPC version
 	if request.JSONRPC != "2.0" {
-		s.writeError(request.ID, -32600, "invalid JSON-RPC version")
+		s.writeError(request.ID, -32600, "Invalid Request")
 		return fmt.Errorf("invalid JSON-RPC version")
 	}
 
+	// Handle the request using the wrapped server
 	result, err := s.server.Request(ctx, request.Method, request.Params)
 	if err != nil {
+		s.writeError(request.ID, -32603, err.Error())
 		return fmt.Errorf("request handling error: %w", err)
 	}
 
