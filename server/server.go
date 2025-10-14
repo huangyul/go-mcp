@@ -80,7 +80,6 @@ func NewDefaultServer(name, version string) *DefaultServer {
 	s.HandleCallTool(s.defaultCallTool)
 	s.HandleSetLevel(s.defaultSetLevel)
 	s.HandleComplete(s.defaultComplete)
-	s.HandleNotification("initialized", s.defaultNotificationInitialized)
 
 	return s
 }
@@ -101,6 +100,10 @@ func (s *DefaultServer) Request(
 	}
 
 	if strings.Contains(method, "notifications") {
+		if s.handlers[method] == nil {
+			return nil, nil
+		}
+
 		return s.handlers[method].(NotificationFunc)(ctx, params)
 	}
 
@@ -389,13 +392,6 @@ func (s *DefaultServer) defaultInitialize(
 			},
 		},
 	}, nil
-}
-
-func (s *DefaultServer) defaultNotificationInitialized(
-	ctx context.Context,
-	args any,
-) (any, error) {
-	return nil, nil
 }
 
 func (s *DefaultServer) defaultPing(ctx context.Context) error {
