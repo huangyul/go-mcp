@@ -91,6 +91,10 @@ func (s *DefaultServer) Request(
 		return nil, fmt.Errorf("method not found: %s", method)
 	}
 
+	if params == nil {
+		params = json.RawMessage("{}")
+	}
+
 	switch method {
 	case "initialize":
 		var p struct {
