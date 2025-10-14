@@ -13,9 +13,10 @@ import (
 
 func main() {
 	c, err := client.NewStdioMCPClient(
-		"/home/huang/.nvm/versions/node/v22.19.0/bin/npx",
-		"-y",
-		"@modelcontextprotocol/server-filesystem",
+		"go",
+		"run",
+		"github.com/mark3labs/mcp-filesystem-server@latest",
+		".",
 		"/tmp",
 	)
 
