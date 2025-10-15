@@ -24,7 +24,7 @@ type sseSession struct {
 	done    chan struct{}
 }
 
-func NewSSeServer(server MCPServer, baseURL string) *SSEServer {
+func NewSSEServer(server MCPServer, baseURL string) *SSEServer {
 	return &SSEServer{
 		mcpServer: server,
 		baseURL:   baseURL,
