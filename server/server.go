@@ -95,21 +95,24 @@ func (s *DefaultServer) Request(
 	method string,
 	params json.RawMessage,
 ) (interface{}, error) {
-	_, ok := s.handlers[method]
-	if !ok {
-		return nil, fmt.Errorf("method not found: %s", method)
-	}
 
 	if params == nil {
 		params = json.RawMessage("{}")
 	}
 
+	// Handle notifications
 	if strings.Contains(method, "notifications") {
 		if s.handlers[method] == nil {
-			return struct{}{}, nil
+			return nil, nil
 		}
 
 		return s.handlers[method].(NotificationFunc)(ctx, params)
+	}
+
+	// Handle all other methods
+	_, ok := s.handlers[method]
+	if !ok {
+		return nil, fmt.Errorf("method not found: %s", method)
 	}
 
 	switch method {

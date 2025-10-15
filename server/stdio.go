@@ -126,6 +126,11 @@ func (s *StdioServer) handleMessage(ctx context.Context, line string) error {
 		return fmt.Errorf("request handling error: %w", err)
 	}
 
+	// Ignore empty result
+	if result == nil {
+		return nil
+	}
+
 	response := JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      request.ID,
