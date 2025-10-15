@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 
@@ -14,9 +15,10 @@ func main() {
 	mcpServer.HandleCallTool(example.HandleToolCall)
 	mcpServer.HandleListTools(example.HandleListTools)
 
+	fmt.Fprintf(os.Stdout, "server is running\name: %s\nversion: %s\n\n", "calculator", "1.0")
+
 	if err := server.ServeStdio(mcpServer); err != nil {
 		log.Fatal(err)
 		os.Exit(1)
 	}
-
 }
