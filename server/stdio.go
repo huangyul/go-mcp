@@ -33,13 +33,13 @@ type JSONRPCError struct {
 }
 
 type StdioServer struct {
-	server    *DefaultServer
+	server    MCPServer
 	signChan  chan os.Signal
 	errLogger *log.Logger
 	done      chan struct{}
 }
 
-func ServeStdio(server *DefaultServer) error {
+func ServeStdio(server MCPServer) error {
 	s := &StdioServer{
 		server:    server,
 		signChan:  make(chan os.Signal, 1),

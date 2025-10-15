@@ -19,7 +19,7 @@ func (c *CalculationError) Error() string {
 }
 
 type Calculator struct {
-	server *server.DefaultServer
+	server server.MCPServer
 }
 
 func NewCalculator() *Calculator {

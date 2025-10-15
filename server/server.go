@@ -10,6 +10,11 @@ import (
 )
 
 type MCPServer interface {
+	Request(
+		ctx context.Context,
+		method string,
+		params json.RawMessage,
+	) (any, error)
 	HandleInitialize(InitializeFunc)
 	HandlePing(PingFunc)
 	HandleListResources(ListResourcesFunc)
@@ -58,7 +63,7 @@ type DefaultServer struct {
 }
 
 // NewDefaultServer creates a new server with default handlers
-func NewDefaultServer(name, version string) *DefaultServer {
+func NewDefaultServer(name, version string) MCPServer {
 	s := &DefaultServer{
 		handlers: make(map[string]interface{}),
 		name:     name,
