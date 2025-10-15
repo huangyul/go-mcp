@@ -3,11 +3,8 @@ package server
 import (
 	"context"
 	"fmt"
-	"log"
-	"os"
 
 	"github.com/huangyul/go-mcp/mcp"
-	"github.com/huangyul/go-mcp/server"
 )
 
 type CalculationError struct {
@@ -18,21 +15,7 @@ func (c *CalculationError) Error() string {
 	return c.Message
 }
 
-type Calculator struct {
-	server server.MCPServer
-}
-
-func NewCalculator() *Calculator {
-	server := server.NewDefaultServer("calculator", "1.0")
-	cal := &Calculator{server: server}
-
-	server.HandleListTools(cal.handleListTools)
-	server.HandleCallTool(cal.handleToolCall)
-
-	return cal
-}
-
-func (c *Calculator) handleListTools(
+func HandleListTools(
 	ctx context.Context,
 	cursor *string,
 ) (*mcp.ListToolsResult, error) {
@@ -110,7 +93,7 @@ func (c *Calculator) handleListTools(
 	}, nil
 }
 
-func (c *Calculator) handleToolCall(
+func HandleToolCall(
 	ctx context.Context,
 	name string,
 	args map[string]interface{},
@@ -152,17 +135,4 @@ func (c *Calculator) handleToolCall(
 			},
 		},
 	}, nil
-}
-
-func (c *Calculator) Serve() error {
-	return server.ServeStdio(c.server)
-}
-
-func main() {
-	cal := NewCalculator()
-
-	if err := cal.Serve(); err != nil {
-		log.Printf("Server error: %v\n", err)
-		os.Exit(1)
-	}
 }
