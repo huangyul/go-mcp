@@ -107,11 +107,15 @@ func NewDefaultServer(name, version string) MCPServer {
 func (s *DefaultServer) Request(ctx context.Context, request JSONRPCRequest) JSONRPCResponse {
 	resp, err := s.handleRequest(ctx, request.Method, request.Params)
 	if err != nil {
+		errorCode := -32603
+		if err.Error() == fmt.Sprintf("mehtod not found: %s", request.Method) {
+			errorCode = -32601
+		}
 		return JSONRPCResponse{
 			JSONRPC: "2.0",
 			ID:      request.ID,
 			Error: &JSONRPCError{
-				Code:    -32700,
+				Code:    errorCode,
 				Message: err.Error(),
 			},
 		}
