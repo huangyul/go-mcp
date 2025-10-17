@@ -96,27 +96,7 @@ func (s *StdioServer) handleMessage(ctx context.Context, line string) error {
 		return fmt.Errorf("failed to parse JSON-RPC request: %v", err)
 	}
 
-	if request.JSONRPC != "2.0" {
-		s.writeError(nil, -32600, "Invalid version")
-		return fmt.Errorf("invalid JSON-RPC version")
-	}
-
-	result, err := s.server.Request(ctx, request.Method, request.Params)
-	if err != nil {
-		s.writeError(nil, -32603, err.Error())
-		return fmt.Errorf("request handling error: %w", err)
-	}
-
-	// Ignore empty result
-	if result == nil {
-		return nil
-	}
-
-	response := JSONRPCResponse{
-		JSONRPC: "2.0",
-		ID:      request.ID,
-		Result:  result,
-	}
+	response := s.server.Request(ctx, request)
 
 	return s.writeResponse(response)
 }

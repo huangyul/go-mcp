@@ -152,23 +152,7 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if request.JSONRPC != "2.0" {
-		s.writeJSONRPCError(w, request.ID, -32600, "Invalid JSON-RPC version")
-		return
-	}
-
-	result, err := s.mcpServer.Request(r.Context(), request.Method, request.Params)
-	if err != nil {
-		// Handle error
-		s.writeJSONRPCError(w, request.ID, -32603, err.Error())
-		return
-	}
-
-	response := &JSONRPCResponse{
-		JSONRPC: "2.0",
-		ID:      request.ID,
-		Result:  result,
-	}
+	response := s.mcpServer.Request(r.Context(), request)
 
 	data, _ := json.Marshal(response)
 	fmt.Fprintf(session.writer, "event: message\ndata: %s\n\n", data)

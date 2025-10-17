@@ -29,11 +29,7 @@ type JSONRPCError struct {
 }
 
 type MCPServer interface {
-	Request(
-		ctx context.Context,
-		method string,
-		params json.RawMessage,
-	) (any, error)
+	Request(ctx context.Context, request JSONRPCRequest) JSONRPCResponse
 	HandleInitialize(InitializeFunc)
 	HandlePing(PingFunc)
 	HandleListResources(ListResourcesFunc)
@@ -108,8 +104,27 @@ func NewDefaultServer(name, version string) MCPServer {
 	return s
 }
 
+func (s *DefaultServer) Request(ctx context.Context, request JSONRPCRequest) JSONRPCResponse {
+	resp, err := s.handleRequest(ctx, request.Method, request.Params)
+	if err != nil {
+		return JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      request.ID,
+			Error: &JSONRPCError{
+				Code:    -32700,
+				Message: err.Error(),
+			},
+		}
+	}
+	return JSONRPCResponse{
+		JSONRPC: "2.0",
+		ID:      request.ID,
+		Result:  resp,
+	}
+}
+
 // Request is the main entrypoint of the server
-func (s *DefaultServer) Request(
+func (s *DefaultServer) handleRequest(
 	ctx context.Context,
 	method string,
 	params json.RawMessage,
