@@ -7,12 +7,13 @@ import (
 	"github.com/huangyul/go-mcp/mcp"
 )
 
+// CalculationError represents an error during calculation
 type CalculationError struct {
 	Message string
 }
 
-func (c *CalculationError) Error() string {
-	return c.Message
+func (e CalculationError) Error() string {
+	return e.Message
 }
 
 func HandleListTools(
@@ -26,7 +27,7 @@ func HandleListTools(
 				Description: "Add two numbers",
 				InputSchema: mcp.ToolInputSchema{
 					Type: "object",
-					Properties: map[string]interface{}{
+					Properties: mcp.ToolInputSchemaProperties{
 						"a": map[string]interface{}{
 							"type":        "number",
 							"description": "First number",
@@ -43,7 +44,7 @@ func HandleListTools(
 				Description: "Subtract two numbers",
 				InputSchema: mcp.ToolInputSchema{
 					Type: "object",
-					Properties: map[string]interface{}{
+					Properties: mcp.ToolInputSchemaProperties{
 						"a": map[string]interface{}{
 							"type":        "number",
 							"description": "First number",
@@ -60,7 +61,7 @@ func HandleListTools(
 				Description: "Multiply two numbers",
 				InputSchema: mcp.ToolInputSchema{
 					Type: "object",
-					Properties: map[string]interface{}{
+					Properties: mcp.ToolInputSchemaProperties{
 						"a": map[string]interface{}{
 							"type":        "number",
 							"description": "First number",
@@ -77,7 +78,7 @@ func HandleListTools(
 				Description: "Divide two numbers",
 				InputSchema: mcp.ToolInputSchema{
 					Type: "object",
-					Properties: map[string]interface{}{
+					Properties: mcp.ToolInputSchemaProperties{
 						"a": map[string]interface{}{
 							"type":        "number",
 							"description": "First number (dividend)",
@@ -128,7 +129,7 @@ func HandleToolCall(
 
 	// Create response
 	return &mcp.CallToolResult{
-		Content: []mcp.Content{
+		Content: []interface{}{
 			mcp.TextContent{
 				Type: "text",
 				Text: fmt.Sprintf("%.2f", result),

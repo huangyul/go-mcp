@@ -61,6 +61,6 @@ type MCPClient interface {
 	Complete(
 		ctx context.Context,
 		ref interface{},
-		argument mcp.CompleteArgument,
+		argument mcp.CompleteRequestParamsArgument,
 	) (*mcp.CompleteResult, error)
 }

@@ -125,7 +125,7 @@ func TestSSEMCPClient(t *testing.T) {
 	})
 
 	t.Run("Complete", func(t *testing.T) {
-		result, err := client.Complete(ctx, "test-ref", mcp.CompleteArgument{
+		result, err := client.Complete(ctx, "test-ref", mcp.CompleteRequestParamsArgument{
 			Name: "test-arg",
 		})
 		assert.NoError(t, err)
