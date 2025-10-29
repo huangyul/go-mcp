@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	example "github.com/huangyul/go-mcp/examples/server"
+	example "github.com/huangyul/go-mcp/examples/server/calculator"
 	"github.com/huangyul/go-mcp/server"
 )
 

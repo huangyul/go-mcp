@@ -2315,6 +2315,10 @@ type Resource struct {
 
 	// The URI of this resource.
 	Uri string `json:"uri" yaml:"uri" mapstructure:"uri"`
+
+	// Content
+	Text string `json:"text,omitempty"`
+	Blob string `json:"blob,omitempty"`
 }
 
 type ResourceAnnotations struct {

@@ -33,6 +33,7 @@ type MCPServer interface {
 	HandleInitialize(InitializeFunc)
 	HandlePing(PingFunc)
 	HandleListResources(ListResourcesFunc)
+	HandleListResourceTemplates(ListResourceTemplatesFunc)
 	HandleReadResource(ReadResourceFunc)
 	HandleSubscribe(SubscribeFunc)
 	HandleUnsubscribe(UnsubscribeFunc)
@@ -50,6 +51,8 @@ type InitializeFunc func(ctx context.Context, capabilities mcp.ClientCapabilitie
 type PingFunc func(ctx context.Context) error
 
 type ListResourcesFunc func(ctx context.Context, cursor *string) (*mcp.ListResourcesResult, error)
+
+type ListResourceTemplatesFunc func(ctx context.Context, cursor *string) (*mcp.ListResourceTemplatesResult, error)
 
 type ReadResourceFunc func(ctx context.Context, uri string) (*mcp.ReadResourceResult, error)
 
@@ -91,6 +94,7 @@ func NewDefaultServer(name, version string) MCPServer {
 	// Register default handlers for other methods
 	s.HandlePing(s.defaultPing)
 	s.HandleListResources(s.defaultListResources)
+	s.HandleListResourceTemplates(s.defaultListResourceTemplates)
 	s.HandleReadResource(s.defaultReadResource)
 	s.HandleSubscribe(s.defaultSubscribe)
 	s.HandleUnsubscribe(s.defaultUnsubscribe)
@@ -354,6 +358,12 @@ func (s *DefaultServer) HandleListResources(
 	s.handlers["resources/list"] = f
 }
 
+func (s *DefaultServer) HandleListResourceTemplates(
+	f ListResourceTemplatesFunc,
+) {
+	s.handlers["resources/templates/list"] = f
+}
+
 func (s *DefaultServer) HandleReadResource(
 	f ReadResourceFunc,
 ) {
@@ -444,6 +454,15 @@ func (s *DefaultServer) defaultListResources(
 ) (*mcp.ListResourcesResult, error) {
 	return &mcp.ListResourcesResult{
 		Resources: []mcp.Resource{},
+	}, nil
+}
+
+func (s *DefaultServer) defaultListResourceTemplates(
+	ctx context.Context,
+	cursor *string,
+) (*mcp.ListResourceTemplatesResult, error) {
+	return &mcp.ListResourceTemplatesResult{
+		ResourceTemplates: []mcp.ResourceTemplate{},
 	}, nil
 }
 
